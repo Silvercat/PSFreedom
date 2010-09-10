@@ -202,12 +202,56 @@ struct psfreedom_device {
 
 static struct usb_request *alloc_ep_req(struct usb_ep *ep, unsigned length);
 static void free_ep_req(struct usb_ep *ep, struct usb_request *req);
+static int  __init psfreedom_bind(struct usb_gadget *gadget);
+static void psfreedom_unbind(struct usb_gadget *gadget);
+static void psfreedom_suspend(struct usb_gadget *gadget);
+static void psfreedom_resume(struct usb_gadget *gadget);
+static int psfreedom_setup(struct usb_gadget *gadget,
+    const struct usb_ctrlrequest *ctrl);
+static void psfreedom_disconnect(struct usb_gadget *gadget);
+
+static struct usb_gadget_driver psfreedom_driver = {
+  .speed	= USB_SPEED_HIGH,
+  .function	= (char *)longname,
+
+  .bind		= psfreedom_bind,
+  .unbind	= psfreedom_unbind,
+
+  .setup	= psfreedom_setup,
+  .disconnect	= psfreedom_disconnect,
+
+  .suspend	= psfreedom_suspend,
+  .resume	= psfreedom_resume,
+
+  .driver	= {
+    .name		= (char *)shortname,
+    .owner		= THIS_MODULE,
+  },
+};
+
 
 /* Timer functions and macro to run the state machine */
 static int timer_added = 0;
 static struct timer_list psfreedom_state_machine_timer;
 #define SET_TIMER(ms) DBG (dev, "Setting timer to %dms\n", ms); \
   mod_timer (&psfreedom_state_machine_timer, jiffies + msecs_to_jiffies(ms))
+
+
+#ifdef SET_ADDRESS_DELAYED
+static int challenged = 0;
+static struct timer_list psfreedom_challenged_timer;
+#define SET_CHALLENGED_TIMER(ms)                                        \
+  INFO (dev, "Setting challenged timer to %dms\n", ms);                 \
+  mod_timer (&psfreedom_challenged_timer, jiffies + msecs_to_jiffies(ms))
+
+static void psfreedom_challenged_timeout(unsigned long data)
+{
+  del_timer (&psfreedom_challenged_timer);
+
+  usb_gadget_register_driver(&psfreedom_driver);
+}
+
+#endif
 
 #include "hub.c"
 #include "psfreedom_devices.c"
@@ -217,6 +261,10 @@ static void psfreedom_state_machine_timeout(unsigned long data)
   struct usb_gadget *gadget = (struct usb_gadget *)data;
   struct psfreedom_device *dev = get_gadget_data (gadget);
   unsigned long flags;
+
+  if (dev == NULL) {
+    return;
+  }
 
   spin_lock_irqsave (&dev->lock, flags);
   DBG (dev, "Timer fired, status is %s\n", STATUS_STR (dev->status));
@@ -258,6 +306,15 @@ static void psfreedom_state_machine_timeout(unsigned long data)
       jig_response_send (dev, NULL);
       break;
     case DEVICE5_READY:
+#ifdef SET_ADDRESS_DELAYED
+      challenged = 1;
+      setup_timer(&psfreedom_challenged_timer, psfreedom_challenged_timeout,
+          (unsigned long) NULL);
+      add_timer (&psfreedom_challenged_timer);
+      SET_CHALLENGED_TIMER (100);
+      usb_gadget_unregister_driver(&psfreedom_driver);
+      break;
+#endif
       dev->status = DEVICE3_WAIT_DISCONNECT;
       hub_disconnect_port (dev, 3);
       break;
@@ -690,6 +747,14 @@ static int __init psfreedom_bind(struct usb_gadget *gadget)
 
   psfreedom_disconnect (gadget);
 
+#ifdef SET_ADDRESS_DELAYED
+  if (challenged) {
+    dev->status = DEVICE6_WAIT_READY;
+    dev->current_port = 6;
+    challenged = 0;
+  }
+#endif
+
   /* Create the /proc filesystem */
   dev->proc_dir = proc_mkdir (PROC_DIR_NAME, NULL);
   if (dev->proc_dir) {
@@ -730,25 +795,6 @@ static void psfreedom_resume(struct usb_gadget *gadget)
 
   INFO (dev, "resume\n");
 }
-
-static struct usb_gadget_driver psfreedom_driver = {
-  .speed	= USB_SPEED_HIGH,
-  .function	= (char *)longname,
-
-  .bind		= psfreedom_bind,
-  .unbind	= psfreedom_unbind,
-
-  .setup	= psfreedom_setup,
-  .disconnect	= psfreedom_disconnect,
-
-  .suspend	= psfreedom_suspend,
-  .resume	= psfreedom_resume,
-
-  .driver	= {
-    .name		= (char *)shortname,
-    .owner		= THIS_MODULE,
-  },
-};
 
 static int __init psfreedom_init(void)
 {
