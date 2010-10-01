@@ -1,4 +1,4 @@
-EXTRA_CFLAGS = -I/usr/include
+#EXTRA_CFLAGS = -I/usr/include
 
 obj-m	:= psfreedom.o 
 
@@ -25,7 +25,7 @@ endif
 
 build:
 	$(MAKE) -C pl3
-	$(MAKE) -C $(KDIR) M=$(PWD) EXTRA_CFLAGS="${EXTRA_CFLAGS}" EXTRAVERSION=${EXTRAVERSION} modules
+	$(MAKE) -C $(KDIR) M=$(PWD) EXTRA_CFLAGS="${EXTRA_CFLAGS}" EXTRAVERSION=${EXTRAVERSION} modules ${EXTRA_ARCH}
 
 clean:
 	rm -f *.o *~ core .depend .*.cmd *.ko *.mod.c
@@ -64,6 +64,8 @@ Incredible: Inc
 incredible: Inc
 evo: Evo
 EVO: Evo
+leo: Leo
+LEO: Leo
 
 # Build configuration for each target
 # Don't forget to add a dependency on 'build'
@@ -124,6 +126,12 @@ Evo: EXTRA_CFLAGS += -DENABLE_MSM72K_CONTROLLER -DEVO_OFFSET
 Evo: KDIR := /usr/src/Supersonic-2.6.32
 Evo: EXTRAVERSION:=
 Evo: build
+
+Leo: EXTRA_CFLAGS += -DENABLE_MSM72K_CONTROLLER -DEVO_OFFSET -DDISABLE_FIRMWARE_HOTPLUG -I${KDIR}/include
+Leo: KDIR := /usr/src/linux-2.6.32.9
+Leo: EXTRAVERSION:=
+Leo: EXTRA_ARCH:= ARCH=arm CROSS_COMPILE=/usr/src/arm-2009q3/bin/arm-none-linux-gnueabi-
+Leo: build
 
 Droid: EXTRA_CFLAGS += -DENABLE_MUSB_CONTROLLER
 Droid: KDIR := /usr/src/android-omap-2.6.32

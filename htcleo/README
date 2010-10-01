@@ -1,0 +1,17 @@
+PSFreedom for HTC HD2
+-------------------
+Silvercat
+
+What's I need?
+
+Kernel usage : http://git.linuxtogo.org/?p=groups/mobile-linux/kernel.git;a=shortlog;h=refs/heads/htc-msm-2.6.32
+Change the file drivers/usb/gadget/msm72k_udc.c
+Use the kernel config included
+
+
+Thanks to:
+
+Kakaroto
+Darkstone
+Waninkoko
+Klutsh
