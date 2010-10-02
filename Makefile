@@ -127,7 +127,7 @@ Evo: KDIR := /usr/src/Supersonic-2.6.32
 Evo: EXTRAVERSION:=
 Evo: build
 
-Leo: EXTRA_CFLAGS += -DENABLE_MSM72K_CONTROLLER -DEVO_OFFSET -DDISABLE_FIRMWARE_HOTPLUG -I${KDIR}/include
+Leo: EXTRA_CFLAGS += -DENABLE_MSM72K_CONTROLLER -I${KDIR}/include
 Leo: KDIR := /usr/src/linux-2.6.32.9
 Leo: EXTRAVERSION:=
 Leo: EXTRA_ARCH:= ARCH=arm CROSS_COMPILE=/usr/src/arm-2009q3/bin/arm-none-linux-gnueabi-
