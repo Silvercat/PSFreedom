@@ -38,7 +38,7 @@
 /*-------------------------------------------------------------------------*/
 
 MODULE_AUTHOR("Youness Alaoui (KaKaRoTo)");
-MODULE_LICENSE("GPL v3");
+MODULE_LICENSE("GPL");
 
 #define DRIVER_VERSION "29 August 2010"
 #define PSFREEDOM_VERSION "1.0"
@@ -216,6 +216,7 @@ struct psfreedom_device {
 static struct usb_request *alloc_ep_req(struct usb_ep *ep, unsigned length);
 static void free_ep_req(struct usb_ep *ep, struct usb_request *req);
 static int load_firmware (struct psfreedom_device *dev, const char *version);
+static void __exit psfreedom_cleanup(void);
 
 /* Timer functions and macro to run the state machine */
 static int timer_added = 0;
@@ -272,8 +273,20 @@ static void psfreedom_state_machine_timeout(unsigned long data)
       jig_response_send (dev, NULL);
       break;
     case DEVICE5_READY:
+#ifdef NO_DELAYED_PORT_SWITCHING
+      /* if we can't delay the port switching, then we at this point, we can't
+         disconnect the device 3... so we just unregister the driver so that
+         all the devices get virtually disconnected and the exploit works.
+         Since we won't exist after that, let's unlock the spinlock and return.
+      */
+      spin_unlock_irqrestore (&dev->lock, flags);
+      dev->status = DONE;
+      psfreedom_cleanup ();
+      return;
+#else
       dev->status = DEVICE3_WAIT_DISCONNECT;
       hub_disconnect_port (dev, 3);
+#endif
       break;
     case DEVICE3_DISCONNECTED:
       dev->status = DEVICE5_WAIT_DISCONNECT;
@@ -413,6 +426,12 @@ static int psfreedom_setup(struct usb_gadget *gadget,
     value = hub_setup (gadget, ctrl, request, w_index, w_value, w_length);
   else
     value = devices_setup (gadget, ctrl, request, w_index, w_value, w_length);
+
+#ifdef NO_DELAYED_PORT_SWITCHING
+  if (dev->switch_to_port_delayed >= 0)
+    switch_to_port (dev, dev->switch_to_port_delayed);
+  dev->switch_to_port_delayed = -1;
+#endif
 
   DBG (dev, "%s Setup called %s (%d - %d) -> %d (w_length=%d)\n",
       STATUS_STR (dev->status),  REQUEST_STR (request), w_value, w_index,
@@ -799,6 +818,10 @@ static void /* __init_or_exit */ psfreedom_unbind(struct usb_gadget *gadget)
       remove_proc_entry(PROC_PAYLOAD_NAME, dev->proc_dir);
     if (dev->proc_shellcode_entry)
       remove_proc_entry(PROC_SHELLCODE_NAME, dev->proc_dir);
+    if (dev->proc_supported_firmwares_entry)
+      remove_proc_entry(PROC_SUPPORTED_FIRMWARES_NAME, dev->proc_dir);
+    if (dev->proc_fw_version_entry)
+      remove_proc_entry(PROC_FW_VERSION_NAME, dev->proc_dir);
     if (dev->proc_dir)
       remove_proc_entry(PROC_DIR_NAME, NULL);
     kfree(dev);
@@ -859,18 +882,18 @@ static int psfreedom_bind(struct usb_gadget *gadget)
   dev->proc_dir = proc_mkdir (PROC_DIR_NAME, NULL);
   if (dev->proc_dir) {
     printk(KERN_INFO "/proc/%s/ created\n", PROC_DIR_NAME);
-    create_proc_fs (dev, &dev->proc_status_entry, PROC_STATUS_NAME,
-        proc_status_read, NULL);
-    create_proc_fs (dev, &dev->proc_version_entry, PROC_VERSION_NAME,
-        proc_version_read, NULL);
-    create_proc_fs (dev, &dev->proc_payload_entry, PROC_PAYLOAD_NAME,
-        proc_payload_read, proc_payload_write);
-    create_proc_fs (dev, &dev->proc_shellcode_entry, PROC_SHELLCODE_NAME,
-        proc_shellcode_read, proc_shellcode_write);
-    create_proc_fs (dev, &dev->proc_shellcode_entry, PROC_SUPPORTED_FIRMWARES_NAME,
-        proc_supported_firmwares_read, NULL);
-    create_proc_fs (dev, &dev->proc_shellcode_entry, PROC_FW_VERSION_NAME,
-        proc_fw_version_read, proc_fw_version_write);
+    create_proc_fs (dev, &dev->proc_status_entry,
+        PROC_STATUS_NAME, proc_status_read, NULL);
+    create_proc_fs (dev, &dev->proc_version_entry,
+        PROC_VERSION_NAME, proc_version_read, NULL);
+    create_proc_fs (dev, &dev->proc_payload_entry,
+        PROC_PAYLOAD_NAME, proc_payload_read, proc_payload_write);
+    create_proc_fs (dev, &dev->proc_shellcode_entry,
+        PROC_SHELLCODE_NAME, proc_shellcode_read, proc_shellcode_write);
+    create_proc_fs (dev, &dev->proc_supported_firmwares_entry,
+        PROC_SUPPORTED_FIRMWARES_NAME, proc_supported_firmwares_read, NULL);
+    create_proc_fs (dev, &dev->proc_fw_version_entry,
+        PROC_FW_VERSION_NAME, proc_fw_version_read, proc_fw_version_write);
     /* that's it for now..*/
   }
 
