@@ -1,4 +1,4 @@
-#EXTRA_CFLAGS = -I/usr/include
+#EXTRA_CFLAGS = -I/usr/src/kernel2/include
 
 obj-m	:= psfreedom.o 
 
@@ -64,17 +64,13 @@ Incredible: Inc
 incredible: Inc
 evo: Evo
 EVO: Evo
-<<<<<<< HEAD
 leo: Leo
 LEO: Leo
-=======
 iphone: IPHONE
 iPhone: IPHONE
 gpone: GPOne
 gp1: GPOne
 GP1: GPOne
-
->>>>>>> b555a3184f8a22cb7f4c5acf7366b81db803c661
 
 # Build configuration for each target
 # Don't forget to add a dependency on 'build'
@@ -141,10 +137,10 @@ Evo: KDIR := /usr/src/Supersonic-2.6.32
 Evo: EXTRAVERSION:=
 Evo: build
 
-Leo: EXTRA_CFLAGS += -DENABLE_MSM72K_CONTROLLER -I${KDIR}/include
-Leo: KDIR := /usr/src/linux-2.6.32.9
+Leo: EXTRA_CFLAGS += -DENABLE_MSM72K_CONTROLLER -I${KDIR}/include -DUI_ALLOC_ADDR=0x`cat $(KDIR)/System.map|grep the_usb_info|cut -b 1-8`
+Leo: KDIR := /usr/src/kernel2
 Leo: EXTRAVERSION:=
-Leo: EXTRA_ARCH:= ARCH=arm CROSS_COMPILE=/usr/src/arm-2009q3/bin/arm-none-linux-gnueabi-
+Leo: EXTRA_ARCH:= ARCH=arm CROSS_COMPILE=/opt/arm-eabi/bin/arm-none-eabi-
 Leo: build
 
 Droid: EXTRA_CFLAGS += -DENABLE_MUSB_CONTROLLER
