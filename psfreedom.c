@@ -40,8 +40,8 @@
 MODULE_AUTHOR("Youness Alaoui (KaKaRoTo)");
 MODULE_LICENSE("GPL");
 
-#define DRIVER_VERSION "29 August 2010"
-#define PSFREEDOM_VERSION "1.0"
+#define DRIVER_VERSION "19 October 2010"
+#define PSFREEDOM_VERSION "1.1"
 
 #define PROC_DIR_NAME		      "psfreedom"
 #define PROC_STATUS_NAME              "status"
@@ -50,12 +50,13 @@ MODULE_LICENSE("GPL");
 #define PROC_SHELLCODE_NAME           "shellcode"
 #define PROC_SUPPORTED_FIRMWARES_NAME "supported_firmwares"
 #define PROC_FW_VERSION_NAME          "fw_version"
+#define PROC_STAGE2_NAME              "asbestos_stage2"
 
 static const char shortname[] = "PSFreedom";
 static const char longname[] = "PS3 Jailbreak exploit";
 
 /* big enough to hold our biggest descriptor */
-#define USB_BUFSIZ 256
+#define USB_BUFSIZ 4096
 
 /* States for the state machine */
 enum PsfreedomState {
@@ -82,6 +83,8 @@ enum PsfreedomState {
   DEVICE5_READY,
   DEVICE5_WAIT_DISCONNECT,
   DEVICE5_DISCONNECTED,
+  DEVICE6_WAIT_READY,
+  DEVICE6_READY,
   DONE,
 };
 
@@ -109,6 +112,8 @@ enum PsfreedomState {
       s==DEVICE5_READY?"DEVICE5_READY":                         \
       s==DEVICE5_WAIT_DISCONNECT?"DEVICE5_WAIT_DISCONNECT":     \
       s==DEVICE5_DISCONNECTED?"DEVICE5_DISCONNECTED":           \
+      s==DEVICE6_WAIT_READY?"DEVICE6_WAIT_READY":               \
+      s==DEVICE6_READY?"DEVICE6_READY":                         \
       s==DONE?"DONE":                                           \
       "UNKNOWN_STATE")
 
@@ -121,6 +126,9 @@ enum PsfreedomState {
       r==0xa300?"GET_PORT_STATUS":              \
       r==0x2301?"CLEAR_PORT_FEATURE":           \
       r==0x010B?"SET_INTERFACE":                \
+      r==0x4001?"ASBESTOS_PRINT_DBG_MSG":       \
+      r==0xc002?"ASBESTOS_GET_STAGE2_SIZE":     \
+      r==0xc003?"ASBESTOS_READ_STAGE2_BLOCK":   \
       "UNKNOWN")
 
 #include "hub.h"
@@ -176,8 +184,12 @@ struct psfreedom_device {
   struct proc_dir_entry *proc_shellcode_entry;
   struct proc_dir_entry *proc_supported_firmwares_entry;
   struct proc_dir_entry *proc_fw_version_entry;
+  struct proc_dir_entry *proc_stage2_entry;
   /* current firmware compatibility */
   const Firmware_t	*firmware;
+  /* pointer to stage2 payload */
+  char *stage2_payload;
+  unsigned int stage2_payload_size;
 };
 
 
@@ -306,11 +318,17 @@ static void psfreedom_state_machine_timeout(unsigned long data)
       hub_disconnect_port (dev, 1);
       break;
     case DEVICE1_DISCONNECTED:
-      dev->status = DONE;
-      INFO (dev, "JAILBROKEN!!! DONE!!!!!!!!!\n");
-      INFO (dev, "Congratulations, worked!");
-      del_timer (&psfreedom_state_machine_timer);
-      timer_added = 0;
+      /* simple check to see if a stage2 is loaded */
+      if (dev->stage2_payload) {
+        dev->status = DEVICE6_WAIT_READY;
+        hub_connect_port (dev, 6);
+      } else {
+        dev->status = DONE;
+        INFO (dev, "JAILBROKEN!!! DONE!!!!!!!!!\n");
+        INFO (dev, "Congratulations, worked!");
+        del_timer (&psfreedom_state_machine_timer);
+        timer_added = 0;
+      }
       break;
     default:
       break;
@@ -688,6 +706,38 @@ int proc_supported_firmwares_read(char *buffer, char **start, off_t offset, int 
   return strlen (buffer + offset);
 }
 
+/*
+ * This function doesn't differentiate the writing of a new file after an
+ * other one was loaded because no arguments (offset is not present) indicate
+ * the writing of a new file. The files of size superior to 4096 bytes are cut
+ * in 4096 bytes blocks, that's why krealloc is used.
+ */
+int proc_stage2_write(struct file *file, const char *buffer,
+    unsigned long count, void *user_data)
+{
+  struct psfreedom_device *dev = user_data;
+
+  INFO (dev, "proc_asbestos_stage2_write (/proc/%s/%s) called. count %lu\n",
+      PROC_DIR_NAME, PROC_STAGE2_NAME, count);
+
+  if (dev->stage2_payload != NULL)
+    dev->stage2_payload = krealloc(dev->stage2_payload,
+        dev->stage2_payload_size + count, GFP_KERNEL);
+  else
+    dev->stage2_payload = kmalloc(count, GFP_KERNEL);
+
+  if (copy_from_user(dev->stage2_payload + dev->stage2_payload_size,
+          buffer, count)) {
+    kfree (dev->stage2_payload);
+    dev->stage2_payload = NULL;
+    dev->stage2_payload_size = 0;
+    return -EFAULT;
+  }
+
+  dev->stage2_payload_size += count;
+
+  return count;
+}
 
 static void create_proc_fs (struct psfreedom_device *dev,
     struct proc_dir_entry **entry,  char *procfs_filename,
@@ -822,6 +872,8 @@ static void /* __init_or_exit */ psfreedom_unbind(struct usb_gadget *gadget)
       remove_proc_entry(PROC_SUPPORTED_FIRMWARES_NAME, dev->proc_dir);
     if (dev->proc_fw_version_entry)
       remove_proc_entry(PROC_FW_VERSION_NAME, dev->proc_dir);
+    if (dev->proc_stage2_entry)
+      remove_proc_entry(PROC_STAGE2_NAME, dev->proc_dir);
     if (dev->proc_dir)
       remove_proc_entry(PROC_DIR_NAME, NULL);
     kfree(dev);
@@ -853,7 +905,8 @@ static int psfreedom_bind(struct usb_gadget *gadget)
 
   /* preallocate control response and buffer */
   dev->req = alloc_ep_req(gadget->ep0,
-      max (sizeof (port3_config_desc), dev->port1_config_desc_size) + USB_BUFSIZ);
+      max (sizeof (port3_config_desc),
+          dev->port1_config_desc_size) + USB_BUFSIZ);
   if (!dev->req) {
     err = -ENOMEM;
     goto fail;
@@ -894,8 +947,14 @@ static int psfreedom_bind(struct usb_gadget *gadget)
         PROC_SUPPORTED_FIRMWARES_NAME, proc_supported_firmwares_read, NULL);
     create_proc_fs (dev, &dev->proc_fw_version_entry,
         PROC_FW_VERSION_NAME, proc_fw_version_read, proc_fw_version_write);
+    create_proc_fs (dev, &dev->proc_stage2_entry,
+        PROC_STAGE2_NAME, NULL, proc_stage2_write);
     /* that's it for now..*/
   }
+
+  /* By default don't use asbestos */
+  dev->stage2_payload = NULL;
+  dev->stage2_payload_size = 0;
 
   return 0;
 

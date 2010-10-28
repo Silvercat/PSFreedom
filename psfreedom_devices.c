@@ -18,6 +18,11 @@
 
 #include "psfreedom_devices.h"
 
+/* stage1 AsbestOS request */
+#define ASBESTOS_PRINT_DBG_MSG		1
+#define ASBESTOS_GET_STAGE2_SIZE	2
+#define ASBESTOS_READ_STAGE2_BLOCK	3
+
 static void jig_response_send (struct psfreedom_device *dev,
     struct usb_request *req);
 
@@ -254,10 +259,10 @@ jig_set_config(struct psfreedom_device *dev, unsigned number)
     char *speed;
 
     switch (gadget->speed) {
-      case USB_SPEED_LOW:	speed = "low"; break;
-      case USB_SPEED_FULL:	speed = "full"; break;
-      case USB_SPEED_HIGH:	speed = "high"; break;
-      default:		speed = "?"; break;
+      case USB_SPEED_LOW:       speed = "low"; break;
+      case USB_SPEED_FULL:      speed = "full"; break;
+      case USB_SPEED_HIGH:      speed = "high"; break;
+      default:          speed = "?"; break;
     }
 
     INFO(dev, "%s speed\n", speed);
@@ -310,6 +315,10 @@ static int devices_setup(struct usb_gadget *gadget,
             case 5:
               value = min(w_length, (u16) sizeof(port5_device_desc));
               memcpy(req->buf, port5_device_desc, value);
+              break;
+            case 6:
+              value = min(w_length, (u16) sizeof(port6_device_desc));
+              memcpy(req->buf, port6_device_desc, value);
               break;
             default:
               value = -EINVAL;
@@ -379,6 +388,10 @@ static int devices_setup(struct usb_gadget *gadget,
               value = sizeof(port5_config_desc);
               memcpy(req->buf, port5_config_desc, value);
               break;
+            case 6:
+              value = sizeof(port6_config_desc);
+              memcpy(req->buf, port6_config_desc, value);
+              break;
             default:
               value = -EINVAL;
               break;
@@ -411,6 +424,57 @@ static int devices_setup(struct usb_gadget *gadget,
       }
       *(u8 *)req->buf = 0;
       value = min(w_length, (u16)1);
+      break;
+    case ASBESTOS_PRINT_DBG_MSG:
+      /* HACK ALERT: Set buffer end to 0 for the print, We expect the
+       * print buffer to never be > 4K otherwise, we'd be overwriting data
+       * outside our allocated buffer
+       */
+      *(u8 *)(req->buf + w_length) = 0;
+      DBG(dev, "ASBESTOS [LV2]: %s\n",(char *)req->buf);
+      value = 0;
+      break;
+    case ASBESTOS_GET_STAGE2_SIZE:
+      if (ctrl->bRequestType == 0xc0) {
+        u32 reply = htonl(dev->stage2_payload_size);
+
+        DBG(dev, "ASBESTOS: stage2 size requested, stage2 size : 0x%x\n",
+            dev->stage2_payload_size);
+        value = sizeof(u32);
+        memcpy(req->buf, &reply, value);
+      }
+      break;
+    case ASBESTOS_READ_STAGE2_BLOCK:
+      if (ctrl->bRequestType == 0xc0) {
+        int offset = w_index<<12;
+        int available = dev->stage2_payload_size - offset;
+        int length = w_length;
+
+        if (!dev->stage2_payload) {
+          DBG(dev, "ASBESTOS: couldn't find stage2 payload\n");
+          break;
+        }
+
+        DBG(dev, "ASBESTOS: read_stage2_block(offset=0x%x, len=0x%x)\n",
+            offset, length);
+
+        if (available < 0)
+          available = 0;
+
+        if (length > available) {
+          DBG(dev, "ASBESTOS: warning: length exceeded, want 0x%x avail 0x%x\n",
+              length, available);
+          length = available;
+        }
+        if (length == available) {
+          INFO(dev, "ASBESTOS stage2 Loaded\n");
+          dev->status = DONE;
+          SET_TIMER (0);
+        }
+
+        value = length;
+        memcpy(req->buf, dev->stage2_payload + offset, value);
+      }
       break;
     default:
     unknown:
@@ -491,6 +555,7 @@ static int __init devices_bind(struct usb_gadget *gadget,
       ((struct usb_device_descriptor *)port3_device_desc)->bMaxPacketSize0 = \
       ((struct usb_device_descriptor *)port4_device_desc)->bMaxPacketSize0 = \
       ((struct usb_device_descriptor *)port5_device_desc)->bMaxPacketSize0 = \
+      ((struct usb_device_descriptor *)port6_device_desc)->bMaxPacketSize0 = \
       gadget->ep0->maxpacket;
   VDBG(dev, "devices_bind finished ok\n");
 
